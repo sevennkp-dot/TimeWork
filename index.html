@@ -314,20 +314,73 @@ async function approveLeave(emp,btn){
   btn.disabled=true;
   const buttons=btn.parentElement.querySelectorAll('button');
   const approvedCount=[...buttons].filter(b=>b.disabled).length;
-  if(approvedCount>=2){
-    for(const date of tempSelectedDates){
-      await sb.from('leaves').insert([{name:emp,date:date}]);
-      approvedLeaves.push({name:emp,date:date});
+
+  if(approvedCount<2) return;
+
+  const shifts=["8:30-17:30","10:00-19:00","11:00-20:00"];
+
+  for(const date of tempSelectedDates){
+    const m=new Date(date).getMonth();
+    let shiftMap={};
+
+    // สร้างตารางกะของวันที่เลือก (ยกเว้นคนที่ลา)
+    employees.forEach((e,i)=>{
+      const alreadyLeave=approvedLeaves.find(l=>l.date===date && l.name===e);
+      const isLeaving=(e===emp);
+      if(alreadyLeave || isLeaving) return;
+
+      const shiftIndex=(i+m)%3;
+      shiftMap[e]=shifts[shiftIndex];
+    });
+
+    // ===== Auto Replace Logic =====
+
+    // ถ้ากะ 8:30 หาย → ให้ 10:00 ขึ้นแทน
+    if(!Object.values(shiftMap).includes("8:30-17:30")){
+      const replacement=Object.keys(shiftMap).find(e=>shiftMap[e]==="10:00-19:00");
+      if(replacement){
+        shiftMap[replacement]="8:30-17:30";
+      }
     }
-    leaveHistory[emp].push({dates:[...tempSelectedDates],approvedAt:new Date().toLocaleString('th-TH')});
-    document.getElementById("status-"+emp).innerHTML="<span class='approved'>อนุมัติแล้ว</span>";
-    document.getElementById("selected-"+emp).innerText="";
-    btn.parentElement.innerHTML="";
-    tempSelectedDates=[];
-    activeLeaveEmployee=null;
-    renderCalendar();
-    renderHistory(emp);
+
+    // ถ้ากะ 11:00 หาย → ให้ 10:00 ขึ้นแทน
+    if(!Object.values(shiftMap).includes("11:00-20:00")){
+      const replacement=Object.keys(shiftMap).find(e=>shiftMap[e]==="10:00-19:00");
+      if(replacement){
+        shiftMap[replacement]="11:00-20:00";
+      }
+    }
+
+    const finalHasEarly=Object.values(shiftMap).includes("8:30-17:30");
+    const finalHasLate=Object.values(shiftMap).includes("11:00-20:00");
+
+    if(!finalHasEarly || !finalHasLate){
+      alert("ไม่สามารถลาได้ ต้องเหลือกะ 8:30 และ 11:00 ทุกวัน");
+      btn.disabled=false;
+      return;
+    }
   }
+
+  // ===== SAVE =====
+  for(const date of tempSelectedDates){
+    await sb.from('leaves').insert([{name:emp,date:date}]);
+    approvedLeaves.push({name:emp,date:date});
+  }
+
+  leaveHistory[emp].push({
+    dates:[...tempSelectedDates],
+    approvedAt:new Date().toLocaleString('th-TH')
+  });
+
+  document.getElementById("status-"+emp).innerHTML="<span class='approved'>อนุมัติแล้ว</span>";
+  document.getElementById("selected-"+emp).innerText="";
+  btn.parentElement.innerHTML="";
+
+  tempSelectedDates=[];
+  activeLeaveEmployee=null;
+
+  renderCalendar();
+  renderHistory(emp);
 }
 
 function renderCalendar(){
@@ -335,8 +388,10 @@ function renderCalendar(){
   cal.innerHTML="";
   const y=currentDate.getFullYear();
   const m=currentDate.getMonth();
+
   document.getElementById("monthYear").innerText=
     currentDate.toLocaleDateString('th-TH',{month:'long',year:'numeric'});
+
   const first=new Date(y,m,1).getDay();
   const total=new Date(y,m+1,0).getDate();
 
@@ -347,25 +402,57 @@ function renderCalendar(){
     cal.appendChild(div);
   });
 
-  for(let i=0;i<first;i++)cal.appendChild(document.createElement("div"));
+  for(let i=0;i<first;i++) cal.appendChild(document.createElement("div"));
 
-  for(let d=1;d<=total;d++){
+  const shifts=["8:30-17:30","10:00-19:00","11:00-20:00"];
+
+  for(let d=1; d<=total; d++){
     const div=document.createElement("div");
     div.className="day";
     div.innerHTML=`<div class='day-number'>${d}</div>`;
+
     const full=new Date(y,m,d).toISOString().split('T')[0];
     div.onclick=()=>toggleSelectDate(full,div);
 
+    // ===== สร้าง shiftMap แบบ dynamic =====
+    let shiftMap={};
+
     employees.forEach((emp,i)=>{
-      const leave=approvedLeaves.find(l=>l.date===full&&l.name===emp);
+      const leave=approvedLeaves.find(l=>l.date===full && l.name===emp);
+      if(!leave){
+        const shiftIndex=(i+m)%3;
+        shiftMap[emp]=shifts[shiftIndex];
+      }
+    });
+
+    // ===== Auto Replace =====
+    if(!Object.values(shiftMap).includes("8:30-17:30")){
+      const replacement=Object.keys(shiftMap).find(e=>shiftMap[e]==="10:00-19:00");
+      if(replacement){
+        shiftMap[replacement]="8:30-17:30";
+      }
+    }
+
+    if(!Object.values(shiftMap).includes("11:00-20:00")){
+      const replacement=Object.keys(shiftMap).find(e=>shiftMap[e]==="10:00-19:00");
+      if(replacement){
+        shiftMap[replacement]="11:00-20:00";
+      }
+    }
+
+    // ===== Render =====
+    employees.forEach(emp=>{
+      const leave=approvedLeaves.find(l=>l.date===full && l.name===emp);
       if(leave){
         div.innerHTML+=`<div class='leave-item'>${emp} ลา</div>`;
       }else{
-        const shiftIndex=(i+m)%2;
-        const shift=shiftIndex===0?"8:30-17:30":"11:00-20:00";
-        div.innerHTML+=`<div class='shift-label'>${emp} : ${shift}</div>`;
+        const shift=shiftMap[emp];
+        if(shift){
+          div.innerHTML+=`<div class='shift-label'>${emp} : ${shift}</div>`;
+        }
       }
     });
+
     cal.appendChild(div);
   }
 }
