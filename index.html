@@ -374,7 +374,24 @@ function renderHistory(emp){
   const div=document.getElementById("history-"+emp);
   const history=leaveHistory[emp];
   if(!history||history.length===0){div.innerHTML="ยังไม่มีประวัติ";return;}
-  div.innerHTML=history.map((h,i)=>
+
+  const currentMonth=currentDate.getMonth();
+  const currentYear=currentDate.getFullYear();
+
+  const filtered=history.map(h=>{
+    const datesInMonth=h.dates.filter(d=>{
+      const dt=new Date(d);
+      return dt.getMonth()===currentMonth && dt.getFullYear()===currentYear;
+    });
+    return {...h,dates:datesInMonth};
+  }).filter(h=>h.dates.length>0);
+
+  if(filtered.length===0){
+    div.innerHTML="ไม่มีประวัติในเดือนนี้";
+    return;
+  }
+
+  div.innerHTML=filtered.map((h,i)=>
     `<div><strong>ครั้งที่ ${i+1}</strong><br>${h.dates.join(', ')}<br><small>${h.approvedAt}</small></div><hr>`
   ).join('');
 }
@@ -382,6 +399,7 @@ function renderHistory(emp){
 function changeMonth(o){
   currentDate.setMonth(currentDate.getMonth()+o);
   renderCalendar();
+  employees.forEach(renderHistory);
 }
 
 renderEmployees();
